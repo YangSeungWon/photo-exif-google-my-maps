@@ -199,10 +199,33 @@ class PhotoExifProcessor:
             logger.warning("날짜 정보가 있는 사진이 없습니다.")
             return self.df
 
-        # 날짜 파싱 및 정렬
-        date_df["datetime"] = pd.to_datetime(
-            date_df["DateTimeOriginal"], errors="coerce"
-        )
+        # 날짜 파싱 및 정렬 (일반적인 EXIF 날짜 형식들 시도)
+        def parse_exif_date(date_str):
+            """EXIF 날짜 형식을 파싱"""
+            if pd.isna(date_str):
+                return pd.NaT
+
+            # 일반적인 EXIF 날짜 형식들
+            formats = [
+                "%Y:%m:%d %H:%M:%S",  # 표준 EXIF 형식
+                "%Y-%m-%d %H:%M:%S",  # ISO 형식
+                "%Y:%m:%d",  # 날짜만
+                "%Y-%m-%d",  # ISO 날짜만
+            ]
+
+            for fmt in formats:
+                try:
+                    return pd.to_datetime(date_str, format=fmt)
+                except:
+                    continue
+
+            # 모든 형식 실패 시 일반 파싱 시도
+            try:
+                return pd.to_datetime(date_str, errors="coerce")
+            except:
+                return pd.NaT
+
+        date_df["datetime"] = date_df["DateTimeOriginal"].apply(parse_exif_date)
 
         # NaT 값 제거 (파싱 실패한 날짜들)
         date_df = date_df[date_df["datetime"].notna()].copy()

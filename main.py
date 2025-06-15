@@ -101,15 +101,15 @@ Google My Maps에 업로드할 수 있는 CSV/KML 파일을 생성합니다.
         scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
         self.result_text.configure(yscrollcommand=scrollbar.set)
 
-        # 3단계: 수동 보정
+        # 3단계: 단계별 보정
         step3_frame = ttk.LabelFrame(
-            main_frame, text="3단계: 수동 보정 (선택사항)", padding="10"
+            main_frame, text="3단계: 단계별 보정 (선택사항)", padding="10"
         )
         step3_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
 
         correction_button = ttk.Button(
             step3_frame,
-            text="수동 보정 시작",
+            text="단계별 보정 시작",
             command=self.start_manual_correction,
             width=30,
         )
@@ -216,22 +216,22 @@ Google My Maps에 업로드할 수 있는 CSV/KML 파일을 생성합니다.
             messagebox.showerror("오류", error_msg)
 
     def start_manual_correction(self):
-        """수동 보정 시작"""
+        """단계별 보정 시작"""
         if not self.processor:
             messagebox.showwarning("경고", "먼저 EXIF 데이터 처리를 완료해주세요.")
             return
 
         try:
-            self.status_var.set("수동 보정 GUI 실행 중...")
+            self.status_var.set("단계별 보정 GUI 실행 중...")
             show_correction_menu(self.processor)
-            self.status_var.set("수동 보정 완료")
+            self.status_var.set("단계별 보정 완료")
 
             # 보정 후 순서 재계산
             self.processor.add_order_column()
 
         except Exception as e:
-            error_msg = f"수동 보정 중 오류 발생: {e}"
-            self.status_var.set("수동 보정 실패")
+            error_msg = f"단계별 보정 중 오류 발생: {e}"
+            self.status_var.set("단계별 보정 실패")
             logger.error(error_msg)
             messagebox.showerror("오류", error_msg)
 
@@ -398,3 +398,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 

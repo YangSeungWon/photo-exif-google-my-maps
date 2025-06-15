@@ -194,6 +194,62 @@ custom_csv = exporter.export_csv('custom_export.csv')
 
 ## 🛠️ 문제 해결
 
+### 🖼️ 사진 미리보기 문제
+
+**문제**: 단계별 보정 페이지에서 "미리보기를 불러올 수 없습니다" 오류
+
+**해결 방법**:
+
+1. **Pillow 라이브러리 업데이트**:
+
+   ```bash
+   pip install --upgrade Pillow
+   ```
+
+2. **지원 파일 형식 확인**:
+
+   - ✅ **완전 지원**: JPG, JPEG, PNG, BMP, GIF, TIFF
+   - ⚠️ **제한적 지원**: HEIC, RAW, MOV, MP4 (아이콘으로 표시)
+
+3. **HEIC 파일 지원 강화**:
+
+   ```bash
+   pip install pillow-heif
+   ```
+
+4. **대안 방법들**:
+   - 🖥️ **외부 뷰어 사용**: "외부 뷰어로 열기" 버튼으로 시스템 기본 뷰어 실행
+   - 📊 **파일 정보 확인**: 파일명, 크기, 형식 정보 자동 표시
+   - 🎨 **형식별 아이콘**: 동영상(🎬), HEIC(📷), RAW(📸) 등으로 구분
+
+**미리보기 실패 시 워크플로우**:
+
+```
+미리보기 실패 → 파일 정보 + 아이콘 표시 → "외부 뷰어로 열기" 사용
+```
+
+**"image 'pyimage1' does not exist" 오류 해결**:
+
+이 오류는 tkinter의 PhotoImage 메모리 관리 문제입니다:
+
+1. **메모리 정리 강화**: 자동으로 이전 이미지 참조 정리
+2. **다중 로딩 방법**: ImageTk → 임시파일 → 메모리버퍼 순서로 시도
+3. **이미지 크기 제한**: 너무 큰 이미지(5천만 픽셀 이상) 자동 거부
+4. **가비지 컬렉션**: 메모리 정리 후 강제 가비지 컬렉션 실행
+
+**추가 해결 방법**:
+
+```bash
+# tkinter 재설치 (macOS)
+brew reinstall python-tk
+
+# Pillow 완전 재설치
+pip uninstall Pillow
+pip install Pillow
+
+# 메모리 부족 시 Python 재시작
+```
+
 ### 자주 발생하는 문제
 
 1. **exiftool not found**:

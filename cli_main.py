@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import logging
 import argparse
+import pandas as pd
 
 # 로컬 모듈 import
 from photo_exif_processor import PhotoExifProcessor
@@ -136,18 +137,64 @@ def interactive_mode():
             processor.classify_processing_type()
         )
 
-        if len(manual_date_df) + len(manual_gps_df) + len(manual_both_df) > 0:
-            print("\n⚠️  수동 보정이 필요한 파일이 있습니다:")
-            if len(manual_date_df) > 0:
-                print(f"   📅 날짜만 없음: {len(manual_date_df)}개")
-            if len(manual_gps_df) > 0:
-                print(f"   🗺️  GPS만 없음: {len(manual_gps_df)}개")
-            if len(manual_both_df) > 0:
-                print(f"   ❌ 둘 다 없음: {len(manual_both_df)}개")
+        # 단계별 보정 필요 파일 계산
+        step1_needed = len(manual_date_df) + len(
+            manual_both_df
+        )  # 날짜가 없는 모든 파일
+        step2_needed = len(manual_gps_df) + len(manual_both_df)  # GPS가 없는 모든 파일
 
-            print("\n현재 CLI 버전에서는 자동 처리가 가능한 파일만 내보냅니다.")
-            print("수동 보정이 필요한 경우 GUI 버전을 사용하거나,")
-            print("사진 파일의 EXIF 데이터를 먼저 정리해주세요.")
+        if step1_needed > 0 or step2_needed > 0:
+            print("\n⚠️  단계별 수동 보정이 필요한 파일이 있습니다:")
+            print("=" * 50)
+
+            if step1_needed > 0:
+                print(f"📅 1단계: 시간 보정 필요 → {step1_needed}개 파일")
+                if len(manual_date_df) > 0:
+                    print(f"   • GPS는 있지만 날짜 없음: {len(manual_date_df)}개")
+                if len(manual_both_df) > 0:
+                    print(f"   • 날짜와 GPS 둘 다 없음: {len(manual_both_df)}개")
+
+                # 날짜 보정이 필요한 파일들의 예시 표시
+                print(f"\n   💡 날짜 보정 예시 (처음 3개 파일):")
+                step1_files = (
+                    pd.concat([manual_date_df, manual_both_df])
+                    if not manual_date_df.empty or not manual_both_df.empty
+                    else pd.DataFrame()
+                )
+                if not step1_files.empty:
+                    show_sample_files_for_date_correction(
+                        processor, step1_files.head(3)
+                    )
+
+                print(f"\n   📝 날짜 입력 포맷: YYYY:MM:DD HH:MM:SS")
+                print(f"   📝 입력 예시: 2024:03:15 14:30:25")
+
+            else:
+                print("✅ 1단계: 시간 보정 완료 (모든 파일에 날짜 있음)")
+
+            if step2_needed > 0:
+                print(f"\n🗺️  2단계: 장소 보정 필요 → {step2_needed}개 파일")
+                if len(manual_gps_df) > 0:
+                    print(f"   • 날짜는 있지만 GPS 없음: {len(manual_gps_df)}개")
+                if len(manual_both_df) > 0:
+                    print(f"   • 1단계 완료 후 GPS 입력 필요: {len(manual_both_df)}개")
+            else:
+                print("\n✅ 2단계: 장소 보정 완료 (모든 파일에 GPS 있음)")
+
+            print("\n📝 보정 순서:")
+            if step1_needed > 0:
+                print(
+                    f"   1️⃣ GUI에서 '1단계: 시간 보정' → {step1_needed}개 파일의 날짜 입력"
+                )
+            if step2_needed > 0:
+                print(f"   2️⃣ GUI에서 '2단계: 장소 보정' → 지도에서 위치 클릭")
+
+            print(
+                f"\n📊 최종 완성 예상: {len(auto_df) + step1_needed}개 파일 (현재 자동처리 {len(auto_df)}개 + 보정 {step1_needed}개)"
+            )
+            print("현재 CLI 버전에서는 자동 처리가 가능한 파일만 내보냅니다.")
+            print("GUI 버전 실행: python main.py (tkinter 설치 필요)")
+            print("=" * 50)
 
         # 5. 내보내기 옵션 선택
         print("\n📤 파일 내보내기 옵션:")
@@ -219,6 +266,93 @@ def export_files(processor, choice):
     except Exception as e:
         print(f"❌ 내보내기 중 오류: {e}")
         logger.error(f"내보내기 오류: {e}")
+
+
+def show_sample_files_for_date_correction(processor, sample_files):
+    """날짜 보정이 필요한 파일들의 앞뒤 사진 타임스탬프 예시 표시"""
+    try:
+        all_df = processor.df
+        dated_df = all_df[all_df["DateTimeOriginal"].notna()].copy()
+        dated_df = dated_df.sort_values("FileName")
+
+        for idx, row in sample_files.iterrows():
+            filename = row["FileName"]
+            current_filename = filename
+
+            # IMG_xxx.jpg 형태 파일명 간소화
+            display_name = filename
+            if filename.upper().startswith("IMG_") and filename.upper().endswith(
+                (".JPG", ".JPEG")
+            ):
+                try:
+                    num_part = (
+                        filename.upper()
+                        .replace("IMG_", "")
+                        .replace(".JPG", "")
+                        .replace(".JPEG", "")
+                    )
+                    display_name = f"IMG_{num_part}"
+                except:
+                    pass
+
+            print(f"      📸 {display_name}")
+
+            # 앞뒤 파일 찾기
+            prev_files = dated_df[dated_df["FileName"] < current_filename]
+            next_files = dated_df[dated_df["FileName"] > current_filename]
+
+            if not prev_files.empty:
+                prev_file = prev_files.iloc[-1]
+                prev_name = prev_file["FileName"]
+                prev_date = prev_file["DateTimeOriginal"]
+
+                # 파일명 간소화
+                if prev_name.upper().startswith("IMG_"):
+                    try:
+                        prev_num = (
+                            prev_name.upper()
+                            .replace("IMG_", "")
+                            .replace(".JPG", "")
+                            .replace(".JPEG", "")
+                        )
+                        prev_display = f"IMG_{prev_num}"
+                    except:
+                        prev_display = prev_name
+                else:
+                    prev_display = prev_name
+
+                print(f"         ⬅️  이전: {prev_display} → {prev_date}")
+            else:
+                print(f"         ⬅️  이전: 없음")
+
+            if not next_files.empty:
+                next_file = next_files.iloc[0]
+                next_name = next_file["FileName"]
+                next_date = next_file["DateTimeOriginal"]
+
+                # 파일명 간소화
+                if next_name.upper().startswith("IMG_"):
+                    try:
+                        next_num = (
+                            next_name.upper()
+                            .replace("IMG_", "")
+                            .replace(".JPG", "")
+                            .replace(".JPEG", "")
+                        )
+                        next_display = f"IMG_{next_num}"
+                    except:
+                        next_display = next_name
+                else:
+                    next_display = next_name
+
+                print(f"         ➡️  다음: {next_display} → {next_date}")
+            else:
+                print(f"         ➡️  다음: 없음")
+
+            print()
+
+    except Exception as e:
+        print(f"      ⚠️ 예시 표시 중 오류: {e}")
 
 
 def open_output_folder():
