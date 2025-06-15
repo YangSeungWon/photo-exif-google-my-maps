@@ -203,6 +203,14 @@ class PhotoExifProcessor:
         date_df["datetime"] = pd.to_datetime(
             date_df["DateTimeOriginal"], errors="coerce"
         )
+
+        # NaT 값 제거 (파싱 실패한 날짜들)
+        date_df = date_df[date_df["datetime"].notna()].copy()
+
+        if date_df.empty:
+            logger.warning("유효한 날짜 정보가 있는 사진이 없습니다.")
+            return self.df
+
         date_df["date"] = date_df["datetime"].dt.date
         date_df = date_df.sort_values("datetime")
 
@@ -210,10 +218,17 @@ class PhotoExifProcessor:
         date_diff = date_df["date"].diff()
         date_df["chunk"] = (date_diff > timedelta(days=1)).cumsum()
 
-        # chunk_id 생성 (YYMMDD 형식)
-        date_df["chunk_id"] = date_df.groupby("chunk")["date"].transform(
-            lambda d: d.min().strftime("%y%m%d")
-        )
+        # chunk_id 생성 (YYMMDD 형식) - NaT 값 안전하게 처리
+        def safe_strftime(date_series):
+            try:
+                min_date = date_series.min()
+                if pd.isna(min_date):
+                    return "unknown"
+                return min_date.strftime("%y%m%d")
+            except (AttributeError, ValueError):
+                return "unknown"
+
+        date_df["chunk_id"] = date_df.groupby("chunk")["date"].transform(safe_strftime)
 
         # 원본 DataFrame에 병합
         self.df = self.df.merge(
@@ -222,9 +237,11 @@ class PhotoExifProcessor:
             how="left",
         )
 
-        logger.info(
-            f"총 {self.df['chunk_id'].nunique()}개의 날짜 덩어리를 탐지했습니다."
-        )
+        # 유효한 chunk_id 개수 계산
+        valid_chunks = self.df[
+            self.df["chunk_id"].notna() & (self.df["chunk_id"] != "unknown")
+        ]["chunk_id"].nunique()
+        logger.info(f"총 {valid_chunks}개의 날짜 덩어리를 탐지했습니다.")
         return self.df
 
     def classify_processing_type(self):
@@ -280,10 +297,33 @@ class PhotoExifProcessor:
         if "datetime" not in self.df.columns:
             self.detect_date_chunks()
 
-        # chunk_id별로 시간순 정렬하여 order 부여
-        self.df["order"] = self.df.groupby("chunk_id")["datetime"].rank(
-            method="dense", ascending=True
-        )
+        # chunk_id가 있는 행들만 order 부여
+        if "chunk_id" in self.df.columns:
+            # chunk_id가 유효한 행들만 처리
+            valid_mask = self.df["chunk_id"].notna() & (
+                self.df["chunk_id"] != "unknown"
+            )
+
+            if valid_mask.any():
+                # 유효한 chunk_id가 있는 행들에 대해서만 order 부여
+                valid_df = self.df[valid_mask].copy()
+                valid_df["order"] = valid_df.groupby("chunk_id")["datetime"].rank(
+                    method="dense", ascending=True
+                )
+
+                # 전체 DataFrame에 order 컬럼 초기화
+                self.df["order"] = 0
+
+                # 유효한 행들의 order 값 업데이트
+                self.df.loc[valid_mask, "order"] = valid_df["order"]
+            else:
+                # 유효한 chunk_id가 없으면 모든 order를 0으로 설정
+                self.df["order"] = 0
+        else:
+            # chunk_id 컬럼이 없으면 모든 order를 0으로 설정
+            self.df["order"] = 0
+
+        # order 컬럼을 정수형으로 변환
         self.df["order"] = self.df["order"].fillna(0).astype(int)
 
         return self.df
@@ -304,7 +344,13 @@ class PhotoExifProcessor:
             & self.df["GPSLong"].notna()
         ).sum()
 
-        chunks = self.df["chunk_id"].nunique() if "chunk_id" in self.df.columns else 0
+        # 유효한 chunk_id 개수 계산
+        if "chunk_id" in self.df.columns:
+            chunks = self.df[
+                self.df["chunk_id"].notna() & (self.df["chunk_id"] != "unknown")
+            ]["chunk_id"].nunique()
+        else:
+            chunks = 0
 
         summary = f"""
 === 사진 EXIF 처리 요약 ===

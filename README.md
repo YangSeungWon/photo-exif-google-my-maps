@@ -29,8 +29,21 @@ brew install exiftool
 
 ### 2. 실행
 
+#### GUI 버전 (권장)
+
 ```bash
 python main.py
+```
+
+#### CLI 버전 (tkinter 없는 환경)
+
+```bash
+# 대화형 모드
+python cli_main.py
+
+# 배치 모드
+python cli_main.py -f "/path/to/photos"
+python cli_main.py -f "/path/to/photos" -o csv
 ```
 
 ## 📖 사용 방법
@@ -197,9 +210,17 @@ custom_csv = exporter.export_csv('custom_export.csv')
    - HEIC 파일: `pip install pillow-heif`
    - 권한 문제: 파일 읽기 권한 확인
 
-3. **GUI 실행 오류 (Linux)**:
+3. **GUI 실행 오류 (tkinter 없음)**:
+
    ```bash
+   # macOS (Homebrew로 Python 재설치)
+   brew reinstall python-tk
+
+   # Ubuntu/Debian
    sudo apt-get install python3-tk
+
+   # 또는 CLI 버전 사용
+   python cli_main.py
    ```
 
 ### 로그 확인
