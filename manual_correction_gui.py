@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import logging
 import gc  # 가비지 컬렉션
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,10 @@ class ManualCorrectionGUI:
             foreground="blue",
         )
         self.date_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2, padx=5)
+        # 입력이 바뀔 때마다 버튼 하이라이트 갱신
+        self.date_entry.bind(
+            "<KeyRelease>", lambda e: self.update_selection_indicator()
+        )
         ttk.Label(correction_frame, text="(YYYY:MM:DD HH:MM:SS)").grid(
             row=0, column=2, sticky=tk.W, pady=2
         )
@@ -314,7 +319,10 @@ class ManualCorrectionGUI:
                 self.set_date_value(current_date)
             elif not self.date_var.get().strip():
                 # 자동 입력도 안되고 기존 값도 없으면 빈 값으로 설정
-                self.set_date_value("")
+                if getattr(self, "prev_plus_date", None):
+                    self.set_date_value(self.prev_plus_date)
+                else:
+                    self.set_date_value("")
 
         if self.correction_type in ["gps", "both"]:
             current_lat = current_row.get("GPSLat")
@@ -355,6 +363,10 @@ class ManualCorrectionGUI:
             # 현재 파일 앞뒤의 파일들 찾기
             prev_files = dated_df[dated_df["FileName"] < current_filename]
             next_files = dated_df[dated_df["FileName"] > current_filename]
+
+            # 후보 날짜 계산을 위해 초기화
+            prev_date_obj = None
+            next_date_obj = None
 
             # 이전 사진 정보
             if not prev_files.empty:
@@ -787,13 +799,10 @@ class ManualCorrectionGUI:
             messagebox.showwarning("경고", "열 파일이 선택되지 않았습니다.")
             return
 
+        self._open_external_path(self.current_file_path)
+
+    def _open_external_path(self, file_path):
         try:
-            file_path = self.current_file_path
-
-            if not os.path.exists(file_path):
-                messagebox.showerror("오류", f"파일을 찾을 수 없습니다:\n{file_path}")
-                return
-
             # 운영체제별 기본 뷰어로 열기
             import subprocess
             import sys
@@ -1033,6 +1042,55 @@ class ManualCorrectionGUI:
 
         except Exception as e:
             messagebox.showerror("오류", f"보정 완료 중 오류가 발생했습니다:\n{e}")
+
+    # ---------------- 선택 버튼 하이라이트 -----------------
+    def update_selection_indicator(self):
+        """현재 날짜 값이 후보 값 중 어디와 일치하는지에 따라 버튼 텍스트 앞에 ▶ 표시"""
+        try:
+            current = self.date_var.get().strip()
+
+            if hasattr(self, "prev_plus_btn"):
+                if getattr(self, "prev_plus_date", None) == current:
+                    self.prev_plus_btn.config(text="▶ " + self._prev_btn_label)
+                else:
+                    self.prev_plus_btn.config(text=self._prev_btn_label)
+
+            if hasattr(self, "middle_btn"):
+                if getattr(self, "middle_date", None) == current:
+                    self.middle_btn.config(text="▶ " + self._middle_btn_label)
+                else:
+                    self.middle_btn.config(text=self._middle_btn_label)
+
+            if hasattr(self, "next_minus_btn"):
+                if getattr(self, "next_minus_date", None) == current:
+                    self.next_minus_btn.config(text="▶ " + self._next_btn_label)
+                else:
+                    self.next_minus_btn.config(text=self._next_btn_label)
+        except Exception as e:
+            logger.warning(f"버튼 표시 업데이트 실패: {e}")
+
+    # ---------------- 외부 뷰어: 이전/다음 -----------------
+    def open_prev_external(self):
+        """이전 사진을 OS 기본 뷰어로"""
+        try:
+            if self.current_index <= 0:
+                messagebox.showinfo("알림", "이전 사진이 없습니다.")
+                return
+            prev_path = self.correction_data.iloc[self.current_index - 1]["FilePath"]
+            self._open_external_path(prev_path)
+        except Exception as e:
+            logger.error(f"이전 사진 뷰어 실패: {e}")
+
+    def open_next_external(self):
+        """다음 사진을 OS 기본 뷰어로"""
+        try:
+            if self.current_index + 1 >= len(self.correction_data):
+                messagebox.showinfo("알림", "다음 사진이 없습니다.")
+                return
+            next_path = self.correction_data.iloc[self.current_index + 1]["FilePath"]
+            self._open_external_path(next_path)
+        except Exception as e:
+            logger.error(f"다음 사진 뷰어 실패: {e}")
 
 
 def show_correction_menu(processor):
