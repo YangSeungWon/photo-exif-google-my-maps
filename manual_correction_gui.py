@@ -37,6 +37,9 @@ class ManualCorrectionGUI:
         self.root.title("사진 EXIF 수동 보정")
         self.root.geometry("1200x800")
 
+        # PhotoImage 캐시 (GC로 인한 'pyimageX does not exist' 오류 방지)
+        self._photo_refs: list[ImageTk.PhotoImage] = []
+
         self.setup_ui()
 
     def setup_ui(self):
@@ -695,13 +698,16 @@ class ManualCorrectionGUI:
                         raise Exception("모든 PhotoImage 생성 방법 실패")
 
             if photo:
-                # 기존 이미지 참조 정리
-                self.clear_current_image()
-
                 # 새 이미지 설정
                 self.photo_label.config(image=photo, text="")
-                self.current_photo = photo  # 클래스 변수에 참조 저장
-                self.photo_label.image = photo  # 라벨에도 참조 저장 (이중 보호)
+
+                # 참조 보존 (GC 문제 방지)
+                self.current_photo = photo
+                self.photo_label.image = photo  # 라벨에도 저장
+                self._photo_refs.append(photo)
+                if len(self._photo_refs) > 20:
+                    # 오래된 참조는 제거하여 메모리 누수 방지
+                    self._photo_refs.pop(0)
 
                 logger.info(f"미리보기 로드 성공: {Path(file_path).name}")
             else:
@@ -714,16 +720,11 @@ class ManualCorrectionGUI:
     def clear_current_image(self):
         """현재 이미지 참조 정리"""
         try:
-            if hasattr(self, "current_photo") and self.current_photo:
-                del self.current_photo
-                self.current_photo = None
+            # 라벨에서 이미지 해제 (텍스트만 유지)
+            if hasattr(self, "photo_label"):
+                self.photo_label.config(image="")
 
-            if hasattr(self.photo_label, "image") and self.photo_label.image:
-                del self.photo_label.image
-                self.photo_label.image = None
-
-            # 가비지 컬렉션 강제 실행
-            gc.collect()
+            # 참조는 _photo_refs 리스트에 보존되므로 직접 삭제하지 않음
 
         except Exception as e:
             logger.warning(f"이미지 참조 정리 중 오류: {e}")
@@ -893,25 +894,54 @@ class ManualCorrectionGUI:
                 except:
                     pass
 
-            # 주변 사진들의 GPS 위치를 마커로 표시
+            # 지도 객체 (OpenStreetMap 기본)
             m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
 
-            # 현재 청크의 다른 사진들 위치 표시
-            current_row = self.correction_data.iloc[self.current_index]
-            current_chunk = current_row.get("chunk_id")
+            # 클릭 시 위도/경도 팝업 표시
+            m.add_child(folium.LatLngPopup())
 
+            current_row = self.correction_data.iloc[self.current_index]
+
+            # 현재 사진이 속한 청크의 다른 사진들 마커 (파란색)
+            current_chunk = current_row.get("chunk_id")
             if pd.notna(current_chunk):
                 chunk_df = self.processor.df[
                     (self.processor.df["chunk_id"] == current_chunk)
                     & (self.processor.df["GPSLat"].notna())
                     & (self.processor.df["GPSLong"].notna())
                 ]
-
                 for _, row in chunk_df.iterrows():
                     folium.Marker(
                         [row["GPSLat"], row["GPSLong"]],
-                        popup=row["FileName"],
+                        popup=f"{row['FileName']} (청크)",
                         icon=folium.Icon(color="blue", icon="camera"),
+                    ).add_to(m)
+
+            # 전체 파일 목록에서 이전/다음 사진 찾기 (파일명 기준)
+            file_df = self.processor.df.sort_values("FileName")
+            current_filename = Path(current_row["FilePath"]).name
+
+            prev_rows = file_df[file_df["FileName"] < current_filename]
+            next_rows = file_df[file_df["FileName"] > current_filename]
+
+            # 이전 사진 (초록색)
+            if not prev_rows.empty:
+                prev_row = prev_rows.iloc[-1]
+                if pd.notna(prev_row["GPSLat"]) and pd.notna(prev_row["GPSLong"]):
+                    folium.Marker(
+                        [prev_row["GPSLat"], prev_row["GPSLong"]],
+                        popup=f"이전: {prev_row['FileName']}",
+                        icon=folium.Icon(color="green", icon="arrow-up"),
+                    ).add_to(m)
+
+            # 다음 사진 (빨간색)
+            if not next_rows.empty:
+                next_row = next_rows.iloc[0]
+                if pd.notna(next_row["GPSLat"]) and pd.notna(next_row["GPSLong"]):
+                    folium.Marker(
+                        [next_row["GPSLat"], next_row["GPSLong"]],
+                        popup=f"다음: {next_row['FileName']}",
+                        icon=folium.Icon(color="red", icon="arrow-down"),
                     ).add_to(m)
 
             # 임시 HTML 파일로 저장
@@ -919,10 +949,17 @@ class ManualCorrectionGUI:
             m.save(temp_file.name)
             temp_file.close()
 
-            # 브라우저에서 열기
-            webbrowser.open("file://" + temp_file.name)
+            # 브라우저에서 열기 (새 탭)
+            webbrowser.open_new_tab("file://" + temp_file.name)
 
-            # GPS 입력 다이얼로그
+            # 지도 사용 방법 안내 후 입력 다이얼로그 표시
+            messagebox.showinfo(
+                "지도 사용 안내",
+                "1) 지도가 열리면 원하는 위치를 클릭하세요.\n"
+                "   화면 하단에 위도, 경도가 팝업으로 표시됩니다.\n"
+                "2) 그 좌표를 복사해 아래 입력 창에 붙여넣으면 됩니다.",
+            )
+
             self.show_gps_input_dialog()
 
         except Exception as e:
