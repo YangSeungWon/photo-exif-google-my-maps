@@ -16,7 +16,6 @@ import os
 from pathlib import Path
 import logging
 import gc  # 가비지 컬렉션
-from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +86,36 @@ class ManualCorrectionGUI:
         self.current_gps_label = ttk.Label(info_frame, text="현재 GPS: -")
         self.current_gps_label.grid(row=3, column=0, sticky=tk.W, pady=2)
 
-        # 외부 뷰어로 열기 버튼
-        self.open_external_button = ttk.Button(
-            info_frame, text="외부 뷰어로 열기", command=self.open_external_viewer
+        # ---------- 외부 뷰어 관련 버튼들 ----------
+        viewer_btn_frame = ttk.Frame(info_frame)
+        viewer_btn_frame.grid(row=4, column=0, columnspan=2, pady=10)
+
+        self.open_prev_button = ttk.Button(
+            viewer_btn_frame,
+            text="◀ 이전 사진 보기",
+            width=12,
+            command=self.open_prev_viewer,
         )
-        self.open_external_button.grid(row=4, column=0, pady=10)
+        self.open_prev_button.pack(side=tk.LEFT, padx=4)
+        # 초기에는 비활성화, 데이터 로드 후 update_surrounding_timestamps 에서 활성화
+        self.open_prev_button.state(["disabled"])
+
+        self.open_external_button = ttk.Button(
+            viewer_btn_frame,
+            text="현재 사진 열기",
+            width=14,
+            command=self.open_external_viewer,
+        )
+        self.open_external_button.pack(side=tk.LEFT, padx=4)
+
+        self.open_next_button = ttk.Button(
+            viewer_btn_frame,
+            text="다음 사진 보기 ▶",
+            width=12,
+            command=self.open_next_viewer,
+        )
+        self.open_next_button.pack(side=tk.LEFT, padx=4)
+        self.open_next_button.state(["disabled"])
 
         # 보정 입력 프레임
         correction_frame = ttk.LabelFrame(main_frame, text="보정 입력", padding="10")
@@ -113,10 +137,6 @@ class ManualCorrectionGUI:
             foreground="blue",
         )
         self.date_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2, padx=5)
-        # 입력이 바뀔 때마다 버튼 하이라이트 갱신
-        self.date_entry.bind(
-            "<KeyRelease>", lambda e: self.update_selection_indicator()
-        )
         ttk.Label(correction_frame, text="(YYYY:MM:DD HH:MM:SS)").grid(
             row=0, column=2, sticky=tk.W, pady=2
         )
@@ -132,6 +152,9 @@ class ManualCorrectionGUI:
 
         # 인스턴스 메서드로 바인딩
         self.set_date_value = _set_date_value
+
+        # 날짜 변경 시 버튼 하이라이트 업데이트 (데이터가 로드된 이후에만 안전하게 호출)
+        self.date_var.trace_add("write", lambda *args: self.safe_highlight())
 
         # 날짜 선택 버튼 프레임
         date_buttons_frame = ttk.LabelFrame(
@@ -248,6 +271,9 @@ class ManualCorrectionGUI:
         correction_frame.columnconfigure(1, weight=1)
         progress_frame.columnconfigure(1, weight=1)
 
+        # --------------------------------------------------------------
+        # 초기에는 하이라이트를 시도하지 않는다 (데이터 로딩 후 수행)
+
     def start_correction(self, data, correction_type):
         """
         수동 보정 시작
@@ -319,10 +345,7 @@ class ManualCorrectionGUI:
                 self.set_date_value(current_date)
             elif not self.date_var.get().strip():
                 # 자동 입력도 안되고 기존 값도 없으면 빈 값으로 설정
-                if getattr(self, "prev_plus_date", None):
-                    self.set_date_value(self.prev_plus_date)
-                else:
-                    self.set_date_value("")
+                self.set_date_value("")
 
         if self.correction_type in ["gps", "both"]:
             current_lat = current_row.get("GPSLat")
@@ -332,6 +355,12 @@ class ManualCorrectionGUI:
 
         # 사진 미리보기 로드
         self.load_photo_preview(file_path)
+
+        # 빈 날짜일 경우 자동으로 이전+1초 제안 적용
+        self.auto_fill_prev_plus_one()
+
+        # 버튼 하이라이트 갱신
+        self.highlight_suggestion_buttons()
 
     def update_surrounding_timestamps(self):
         """현재 사진 앞뒤 사진들의 타임스탬프 표시 및 자동 날짜 입력"""
@@ -364,10 +393,6 @@ class ManualCorrectionGUI:
             prev_files = dated_df[dated_df["FileName"] < current_filename]
             next_files = dated_df[dated_df["FileName"] > current_filename]
 
-            # 후보 날짜 계산을 위해 초기화
-            prev_date_obj = None
-            next_date_obj = None
-
             # 이전 사진 정보
             if not prev_files.empty:
                 prev_file = prev_files.iloc[-1]  # 가장 가까운 이전 파일
@@ -396,9 +421,9 @@ class ManualCorrectionGUI:
                     foreground="darkgreen",
                 )
 
-                # 버튼 활성화/비활성화 설정
-                if hasattr(self, "prev_plus_btn"):
-                    self.prev_plus_btn.config(state="normal")
+                # prev viewer 버튼 활성화
+                if hasattr(self, "open_prev_button"):
+                    self.open_prev_button.state(["!disabled"])
 
             else:
                 if hasattr(self, "prev_photo_label"):
@@ -439,6 +464,8 @@ class ManualCorrectionGUI:
                 # 다음 사진이 있으면 다음-1초 버튼 활성화
                 if hasattr(self, "next_minus_btn"):
                     self.next_minus_btn.config(state="normal")
+                if hasattr(self, "open_next_button"):
+                    self.open_next_button.state(["!disabled"])
             else:
                 if hasattr(self, "next_photo_label"):
                     self.next_photo_label.config(
@@ -447,6 +474,8 @@ class ManualCorrectionGUI:
                 # 다음 사진이 없으면 다음-1초 버튼 비활성화
                 if hasattr(self, "next_minus_btn"):
                     self.next_minus_btn.config(state="disabled")
+                if hasattr(self, "open_next_button"):
+                    self.open_next_button.state(["disabled"])
 
             # 중간값 버튼은 앞뒤 모두 있을 때만 활성화
             if hasattr(self, "middle_btn"):
@@ -718,7 +747,7 @@ class ManualCorrectionGUI:
                 self.photo_label.image = photo  # 라벨에도 저장
                 self._photo_refs.append(photo)
                 if len(self._photo_refs) > 20:
-                    # 오래된 참조는 제거하여 메모리 누수 방지
+                    # 오래된 참존는 제거하여 메모리 누수 방지
                     self._photo_refs.pop(0)
 
                 logger.info(f"미리보기 로드 성공: {Path(file_path).name}")
@@ -799,10 +828,13 @@ class ManualCorrectionGUI:
             messagebox.showwarning("경고", "열 파일이 선택되지 않았습니다.")
             return
 
-        self._open_external_path(self.current_file_path)
-
-    def _open_external_path(self, file_path):
         try:
+            file_path = self.current_file_path
+
+            if not os.path.exists(file_path):
+                messagebox.showerror("오류", f"파일을 찾을 수 없습니다:\n{file_path}")
+                return
+
             # 운영체제별 기본 뷰어로 열기
             import subprocess
             import sys
@@ -1043,54 +1075,147 @@ class ManualCorrectionGUI:
         except Exception as e:
             messagebox.showerror("오류", f"보정 완료 중 오류가 발생했습니다:\n{e}")
 
-    # ---------------- 선택 버튼 하이라이트 -----------------
-    def update_selection_indicator(self):
-        """현재 날짜 값이 후보 값 중 어디와 일치하는지에 따라 버튼 텍스트 앞에 ▶ 표시"""
+    # ------------------------------------------------------------------
+    # 추가: 날짜 제안 및 하이라이트 로직
+    # ------------------------------------------------------------------
+    def _compute_prev_next_dates(self):
+        """이전/다음 사진의 DateTimeOriginal을 datetime으로 반환"""
+        if (
+            not isinstance(self.correction_data, pd.DataFrame)
+            or self.correction_data.empty
+        ):
+            return None, None
+
+        current_row = self.correction_data.iloc[self.current_index]
+        current_filename = Path(current_row["FilePath"]).name
+
+        dated_df = self.processor.df[
+            self.processor.df["DateTimeOriginal"].notna()
+        ].copy()
+        if dated_df.empty:
+            return None, None
+        dated_df = dated_df.sort_values("FileName")
+
+        prev_row = dated_df[dated_df["FileName"] < current_filename]
+        next_row = dated_df[dated_df["FileName"] > current_filename]
+
+        prev_dt = None
+        next_dt = None
         try:
-            current = self.date_var.get().strip()
+            if not prev_row.empty:
+                prev_val = prev_row.iloc[-1]["DateTimeOriginal"]
+                prev_dt = (
+                    datetime.strptime(prev_val, "%Y:%m:%d %H:%M:%S")
+                    if isinstance(prev_val, str)
+                    else pd.to_datetime(prev_val).to_pydatetime()
+                )
+            if not next_row.empty:
+                next_val = next_row.iloc[0]["DateTimeOriginal"]
+                next_dt = (
+                    datetime.strptime(next_val, "%Y:%m:%d %H:%M:%S")
+                    if isinstance(next_val, str)
+                    else pd.to_datetime(next_val).to_pydatetime()
+                )
+        except Exception:
+            pass
+        return prev_dt, next_dt
 
-            if hasattr(self, "prev_plus_btn"):
-                if getattr(self, "prev_plus_date", None) == current:
-                    self.prev_plus_btn.config(text="▶ " + self._prev_btn_label)
-                else:
-                    self.prev_plus_btn.config(text=self._prev_btn_label)
+    def _suggested_times(self):
+        prev_dt, next_dt = self._compute_prev_next_dates()
+        prev_plus = middle = next_minus = None
+        if prev_dt:
+            prev_plus = (prev_dt + pd.Timedelta(seconds=1)).strftime(
+                "%Y:%m:%d %H:%M:%S"
+            )
+        if prev_dt and next_dt:
+            middle_dt = prev_dt + (next_dt - prev_dt) / 2
+            middle = middle_dt.strftime("%Y:%m:%d %H:%M:%S")
+        if next_dt:
+            next_minus = (next_dt - pd.Timedelta(seconds=1)).strftime(
+                "%Y:%m:%d %H:%M:%S"
+            )
+        return prev_plus, middle, next_minus
 
-            if hasattr(self, "middle_btn"):
-                if getattr(self, "middle_date", None) == current:
-                    self.middle_btn.config(text="▶ " + self._middle_btn_label)
-                else:
-                    self.middle_btn.config(text=self._middle_btn_label)
+    def highlight_suggestion_buttons(self):
+        """현재 입력값이 제안값 중 하나이면 버튼 스타일 변경"""
+        if (
+            not isinstance(self.correction_data, pd.DataFrame)
+            or self.correction_data.empty
+        ):
+            return
+        curr = self.date_var.get().strip()
+        s_prev, s_mid, s_next = self._suggested_times()
 
-            if hasattr(self, "next_minus_btn"):
-                if getattr(self, "next_minus_date", None) == current:
-                    self.next_minus_btn.config(text="▶ " + self._next_btn_label)
-                else:
-                    self.next_minus_btn.config(text=self._next_btn_label)
-        except Exception as e:
-            logger.warning(f"버튼 표시 업데이트 실패: {e}")
+        def _set(btn, match):
+            btn.configure(style="Selected.TButton" if match else "TButton")
 
-    # ---------------- 외부 뷰어: 이전/다음 -----------------
-    def open_prev_external(self):
-        """이전 사진을 OS 기본 뷰어로"""
+        _set(self.prev_plus_btn, curr == s_prev)
+        _set(self.middle_btn, curr == s_mid)
+        _set(self.next_minus_btn, curr == s_next)
+
+    def auto_fill_prev_plus_one(self):
+        """날짜가 비어있을 때 한 번 자동으로 이전+1초 입력"""
+        if self.date_var.get().strip():
+            return
+        if (
+            not isinstance(self.correction_data, pd.DataFrame)
+            or self.correction_data.empty
+        ):
+            return
+        prev_dt, _ = self._compute_prev_next_dates()
+        if prev_dt is None:
+            return
+        suggested = (prev_dt + pd.Timedelta(seconds=1)).strftime("%Y:%m:%d %H:%M:%S")
+        self.set_date_value(suggested)
+
+    # ------------------------------------------------------------------
+    # 추가: 이전/다음 파일 외부 뷰어 열기
+    # ------------------------------------------------------------------
+    def _open_file_external_generic(self, file_path: str):
+        if not file_path or not os.path.exists(file_path):
+            return
+        import subprocess, sys
+
         try:
-            if self.current_index <= 0:
-                messagebox.showinfo("알림", "이전 사진이 없습니다.")
-                return
-            prev_path = self.correction_data.iloc[self.current_index - 1]["FilePath"]
-            self._open_external_path(prev_path)
+            if sys.platform == "win32":
+                os.startfile(file_path)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", file_path])
+            else:
+                subprocess.run(["xdg-open", file_path])
         except Exception as e:
-            logger.error(f"이전 사진 뷰어 실패: {e}")
+            logger.warning(f"외부 뷰어 실행 실패: {e}")
 
-    def open_next_external(self):
-        """다음 사진을 OS 기본 뷰어로"""
+    def _get_adjacent_file_path(self, direction: int):
+        current_row = self.correction_data.iloc[self.current_index]
+        current_filename = Path(current_row["FilePath"]).name
+        sorted_df = self.processor.df.sort_values("FileName")
+        filenames = sorted_df["FileName"].tolist()
         try:
-            if self.current_index + 1 >= len(self.correction_data):
-                messagebox.showinfo("알림", "다음 사진이 없습니다.")
-                return
-            next_path = self.correction_data.iloc[self.current_index + 1]["FilePath"]
-            self._open_external_path(next_path)
-        except Exception as e:
-            logger.error(f"다음 사진 뷰어 실패: {e}")
+            idx = filenames.index(current_filename)
+        except ValueError:
+            return None
+        new_idx = idx + direction
+        if 0 <= new_idx < len(sorted_df):
+            return sorted_df.iloc[new_idx]["FilePath"]
+        return None
+
+    def open_prev_viewer(self):
+        self._open_file_external_generic(self._get_adjacent_file_path(-1))
+
+    def open_next_viewer(self):
+        self._open_file_external_generic(self._get_adjacent_file_path(1))
+
+    def safe_highlight(self):
+        """데이터가 준비되어 있을 때만 하이라이트"""
+        try:
+            if (
+                isinstance(getattr(self, "correction_data", None), pd.DataFrame)
+                and not self.correction_data.empty
+            ):
+                self.highlight_suggestion_buttons()
+        except Exception:
+            pass
 
 
 def show_correction_menu(processor):
