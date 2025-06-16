@@ -16,6 +16,8 @@ import os
 from pathlib import Path
 import logging
 import gc  # 가비지 컬렉션
+import threading
+from flask import Flask, request, send_file
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,94 @@ class ManualCorrectionGUI:
         # PhotoImage 캐시 (GC로 인한 'pyimageX does not exist' 오류 방지)
         self._photo_refs: list[ImageTk.PhotoImage] = []
 
+        # 좌표 수신용 Flask 서버 (127.0.0.1:5000)
+        self._coord_server = None
+        self._start_coord_server()
+
         self.setup_ui()
+
+    def _start_coord_server(self):
+        """백그라운드 스레드에서 Flask 서버를 띄워 지도와 좌표를 처리"""
+
+        if self._coord_server is not None:
+            return  # 이미 실행됨
+
+        gui_ref = self  # 클로저 캡처
+
+        # Flask 앱 생성
+        app = Flask(__name__)
+        app.logger.disabled = True  # Flask 로그 억제
+
+        # 현재 지도 파일 경로 저장용
+        self._current_map_path = None
+
+        @app.route("/coord")
+        def recv_coord():
+            try:
+                lat = request.args.get("lat", type=float)
+                lon = request.args.get("lon", type=float)
+                if lat is None or lon is None:
+                    return "Invalid coordinates", 400
+
+                logger.info(f"[좌표] 수신: lat={lat}, lon={lon}")
+
+                # Tkinter 메인 스레드에서 변수 업데이트
+                def _update():
+                    gui_ref._set_coords_from_server(lat, lon)
+
+                try:
+                    gui_ref.root.after(0, _update)
+                except Exception as e:
+                    logger.warning(f"GUI 업데이트 실패: {e}")
+
+                return "ok"
+            except Exception as e:
+                logger.error(f"좌표 수신 오류: {e}")
+                return "error", 500
+
+        @app.route("/map")
+        def serve_map():
+            try:
+                if gui_ref._current_map_path and os.path.exists(
+                    gui_ref._current_map_path
+                ):
+                    return send_file(gui_ref._current_map_path, mimetype="text/html")
+                else:
+                    return "Map not found", 404
+            except Exception as e:
+                logger.error(f"지도 서빙 오류: {e}")
+                return "Map error", 500
+
+        def _serve():
+            logger.info("Flask 서버 시작: http://127.0.0.1:5000")
+            try:
+                app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
+            except Exception as e:
+                logger.error(f"Flask 서버 오류: {e}")
+
+        th = threading.Thread(target=_serve, daemon=True)
+        th.start()
+
+        # GUI 종료 시 서버 종료 (Flask는 자동으로 daemon 스레드로 종료됨)
+        def _on_close():
+            try:
+                # 임시 파일 정리
+                if hasattr(self, "_current_map_path") and self._current_map_path:
+                    try:
+                        os.unlink(self._current_map_path)
+                    except:
+                        pass
+                logger.info("Flask 서버 종료")
+            finally:
+                self.root.destroy()
+
+        self.root.protocol("WM_DELETE_WINDOW", _on_close)
+
+    def _set_coords_from_server(self, lat, lon):
+        """Flask 서버로부터 받은 좌표를 GUI에 설정"""
+        self.lat_var.set(f"{lat:.6f}")
+        self.lon_var.set(f"{lon:.6f}")
+        logger.info(f"좌표 수신 및 적용: lat={lat:.6f}, lon={lon:.6f}")
 
     def setup_ui(self):
         """UI 요소 설정"""
@@ -124,9 +213,9 @@ class ManualCorrectionGUI:
         )
 
         # 날짜 표시 (읽기 전용)
-        ttk.Label(correction_frame, text="날짜:").grid(
-            row=0, column=0, sticky=tk.W, pady=2
-        )
+        self.date_label = ttk.Label(correction_frame, text="날짜:")
+        self.date_label.grid(row=0, column=0, sticky=tk.W, pady=2)
+
         self.date_var = tk.StringVar()
         # 직접 수정 가능한 Entry
         self.date_entry = ttk.Entry(
@@ -137,9 +226,10 @@ class ManualCorrectionGUI:
             foreground="blue",
         )
         self.date_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2, padx=5)
-        ttk.Label(correction_frame, text="(YYYY:MM:DD HH:MM:SS)").grid(
-            row=0, column=2, sticky=tk.W, pady=2
+        self.date_format_label = ttk.Label(
+            correction_frame, text="(YYYY:MM:DD HH:MM:SS)"
         )
+        self.date_format_label.grid(row=0, column=2, sticky=tk.W, pady=2)
 
         # 날짜 값을 설정하고 Entry를 동시에 업데이트하는 헬퍼
         def _set_date_value(value: str):
@@ -200,26 +290,45 @@ class ManualCorrectionGUI:
         format_frame = ttk.Frame(correction_frame)
         format_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
 
-        ttk.Label(format_frame, text="포맷 예시:", font=("", 9, "bold")).grid(
-            row=0, column=0, sticky=tk.W
+        self.format_example_label1 = ttk.Label(
+            format_frame, text="포맷 예시:", font=("", 9, "bold")
         )
-        ttk.Label(
-            format_frame, text="2024:03:15 14:30:25", font=("", 9), foreground="blue"
-        ).grid(row=0, column=1, sticky=tk.W, padx=10)
+        self.format_example_label1.grid(row=0, column=0, sticky=tk.W)
 
-        # GPS 입력
-        ttk.Label(correction_frame, text="위도:").grid(
-            row=3, column=0, sticky=tk.W, pady=2
+        self.format_example_label2 = ttk.Label(
+            format_frame, text="2024:03:15 14:30:25", font=("", 9), foreground="blue"
         )
+        self.format_example_label2.grid(row=0, column=1, sticky=tk.W, padx=10)
+
+        # 날짜 관련 위젯 리스트 (숨김/표시용)
+        self.date_widgets = [
+            self.date_label,
+            self.date_entry,
+            self.date_format_label,
+            date_buttons_frame,
+            format_frame,
+            self.prev_photo_label,
+            self.next_photo_label,
+            self.prev_plus_btn,
+            self.middle_btn,
+            self.next_minus_btn,
+            self.format_example_label1,
+            self.format_example_label2,
+        ]
+
+        # --- GPS 위젯(라벨·엔트리·버튼) -----------------------------
+        self.lat_label = ttk.Label(correction_frame, text="위도:")
+        self.lat_label.grid(row=3, column=0, sticky=tk.W, pady=2)
+
         self.lat_var = tk.StringVar()
         self.lat_entry = ttk.Entry(
             correction_frame, textvariable=self.lat_var, width=15
         )
         self.lat_entry.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=2, padx=5)
 
-        ttk.Label(correction_frame, text="경도:").grid(
-            row=4, column=0, sticky=tk.W, pady=2
-        )
+        self.lon_label = ttk.Label(correction_frame, text="경도:")
+        self.lon_label.grid(row=4, column=0, sticky=tk.W, pady=2)
+
         self.lon_var = tk.StringVar()
         self.lon_entry = ttk.Entry(
             correction_frame, textvariable=self.lon_var, width=15
@@ -231,6 +340,15 @@ class ManualCorrectionGUI:
             correction_frame, text="지도에서 선택", command=self.open_map_for_gps
         )
         self.map_button.grid(row=5, column=1, pady=10)
+
+        # GPS 관련 위젯 리스트 (숨김/표시용)
+        self.gps_widgets = [
+            self.lat_label,
+            self.lat_entry,
+            self.lon_label,
+            self.lon_entry,
+            self.map_button,
+        ]
 
         # 진행 상황 프레임
         progress_frame = ttk.Frame(main_frame)
@@ -273,6 +391,9 @@ class ManualCorrectionGUI:
 
         # --------------------------------------------------------------
         # 초기에는 하이라이트를 시도하지 않는다 (데이터 로딩 후 수행)
+
+        # 초기에는 GPS 위젯 가시성 업데이트 (correction_type 값은 아직 없지만 안전)
+        self._update_widgets_visibility()
 
     def start_correction(self, data, correction_type):
         """
@@ -355,6 +476,9 @@ class ManualCorrectionGUI:
 
         # 사진 미리보기 로드
         self.load_photo_preview(file_path)
+
+        # step별 GPS 위젯 가시성 갱신 (update_display 호출 시에도 안전)
+        self._update_widgets_visibility()
 
         # 빈 날짜일 경우 자동으로 이전+1초 제안 적용
         self.auto_fill_prev_plus_one()
@@ -923,6 +1047,11 @@ class ManualCorrectionGUI:
             return
 
         try:
+            logger.info("[지도] open_map_for_gps 호출")
+
+            # 현재 사진 정보 가져오기
+            current_row = self.correction_data.iloc[self.current_index]
+
             # 현재 위치 또는 기본 위치 (서울) 설정
             center_lat = 37.5665
             center_lon = 126.9780
@@ -935,13 +1064,19 @@ class ManualCorrectionGUI:
                 except:
                     pass
 
+            logger.debug(f"[지도] 중심 좌표 결정: lat={center_lat}, lon={center_lon}")
+
             # 지도 객체 (OpenStreetMap 기본)
             m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+            logger.debug("[지도] Folium 지도 객체 생성 완료")
 
-            # 클릭 시 위도/경도 팝업 표시
-            m.add_child(folium.LatLngPopup())
-
-            current_row = self.correction_data.iloc[self.current_index]
+            # 현재 사진(주황색★) -------------------------------------------------
+            if pd.notna(current_row["GPSLat"]) and pd.notna(current_row["GPSLong"]):
+                folium.Marker(
+                    [current_row["GPSLat"], current_row["GPSLong"]],
+                    popup=f"현재: {current_row['FileName']}",
+                    icon=folium.Icon(color="orange", icon="star"),
+                ).add_to(m)
 
             # 현재 사진이 속한 청크의 다른 사진들 마커 (파란색)
             current_chunk = current_row.get("chunk_id")
@@ -957,6 +1092,9 @@ class ManualCorrectionGUI:
                         popup=f"{row['FileName']} (청크)",
                         icon=folium.Icon(color="blue", icon="camera"),
                     ).add_to(m)
+                logger.debug(
+                    f"[지도] 동일 청크 GPS 마커 {len(chunk_df) if pd.notna(current_chunk) else 0}개 추가"
+                )
 
             # 전체 파일 목록에서 이전/다음 사진 찾기 (파일명 기준)
             file_df = self.processor.df.sort_values("FileName")
@@ -985,67 +1123,64 @@ class ManualCorrectionGUI:
                         icon=folium.Icon(color="red", icon="arrow-down"),
                     ).add_to(m)
 
-            # 임시 HTML 파일로 저장
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
-            m.save(temp_file.name)
+            # 지도 클릭 시 좌표 전송하는 JS 추가
+            map_id = m.get_name()  # Folium이 생성한 실제 맵 변수명 가져오기
+            click_js = f"""
+<script>
+{map_id}.on('click', function(e) {{
+    var lat = e.latlng.lat.toFixed(6);
+    var lon = e.latlng.lng.toFixed(6);
+    
+    // 동일 오리진으로 요청 (CORS 문제 해결)
+    fetch('/coord?lat=' + lat + '&lon=' + lon)
+        .then(response => {{
+            if (response.ok) {{
+                console.log('좌표 전송 완료:', lat, lon);
+                // 클릭 위치에 확인 팝업 표시
+                L.popup({{closeOnClick: false, autoClose: true}})
+                    .setLatLng(e.latlng)
+                    .setContent('<b>좌표 전송 완료!</b><br>위도: ' + lat + '<br>경도: ' + lon)
+                    .openOn({map_id});
+            }} else {{
+                console.error('좌표 전송 실패:', response.status);
+            }}
+        }})
+        .catch(err => {{
+            console.error('좌표 전송 오류:', err);
+        }});
+}});
+</script>
+"""
+            m.get_root().html.add_child(folium.Element(click_js))
+
+            # 임시 HTML 파일로 저장 (Flask에서 서빙할 수 있도록)
+            import tempfile
+
+            temp_file = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".html", dir=tempfile.gettempdir()
+            )
             temp_file.close()
 
-            # 브라우저에서 열기 (새 탭)
-            webbrowser.open_new_tab("file://" + temp_file.name)
+            # 지도 파일 경로 저장
+            self._current_map_path = temp_file.name
+            m.save(self._current_map_path)
+            logger.info(f"[지도] HTML 저장: {self._current_map_path}")
 
-            # 지도 사용 방법 안내 후 입력 다이얼로그 표시
+            # 브라우저에서 Flask 서버를 통해 열기 (동일 오리진)
+            webbrowser.open_new_tab("http://127.0.0.1:5000/map")
+            logger.info("[지도] Flask 서버를 통해 지도 열기 요청")
+
+            # 지도 사용 방법 안내 (자동 입력 방식으로 변경)
             messagebox.showinfo(
                 "지도 사용 안내",
-                "1) 지도가 열리면 원하는 위치를 클릭하세요.\n"
-                "   화면 하단에 위도, 경도가 팝업으로 표시됩니다.\n"
-                "2) 그 좌표를 복사해 아래 입력 창에 붙여넣으면 됩니다.",
+                "지도가 열리면 원하는 위치를 클릭하세요.\n\n"
+                "클릭한 위치의 GPS 좌표가 자동으로 입력됩니다.\n\n"
+                "입력된 좌표를 확인 후 '저장 & 다음'을 눌러주세요.",
             )
 
-            self.show_gps_input_dialog()
-
         except Exception as e:
+            logger.error(f"[지도] 오류 발생: {e}")
             messagebox.showerror("오류", f"지도 열기 중 오류가 발생했습니다:\n{e}")
-
-    def show_gps_input_dialog(self):
-        """GPS 좌표 입력 다이얼로그"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("GPS 좌표 입력")
-        dialog.geometry("300x150")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        ttk.Label(dialog, text="지도에서 확인한 좌표를 입력하세요:").pack(pady=10)
-
-        frame = ttk.Frame(dialog)
-        frame.pack(pady=10)
-
-        ttk.Label(frame, text="위도:").grid(row=0, column=0, padx=5, pady=5)
-        lat_entry = ttk.Entry(frame, width=15)
-        lat_entry.grid(row=0, column=1, padx=5, pady=5)
-
-        ttk.Label(frame, text="경도:").grid(row=1, column=0, padx=5, pady=5)
-        lon_entry = ttk.Entry(frame, width=15)
-        lon_entry.grid(row=1, column=1, padx=5, pady=5)
-
-        def apply_coordinates():
-            try:
-                lat = float(lat_entry.get())
-                lon = float(lon_entry.get())
-                self.lat_var.set(str(lat))
-                self.lon_var.set(str(lon))
-                dialog.destroy()
-            except ValueError:
-                messagebox.showerror("오류", "올바른 숫자를 입력해주세요.")
-
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
-
-        ttk.Button(button_frame, text="적용", command=apply_coordinates).pack(
-            side=tk.LEFT, padx=5
-        )
-        ttk.Button(button_frame, text="취소", command=dialog.destroy).pack(
-            side=tk.LEFT, padx=5
-        )
 
     def finish_correction(self):
         """보정 완료"""
@@ -1216,6 +1351,49 @@ class ManualCorrectionGUI:
                 self.highlight_suggestion_buttons()
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # GPS 위젯 가시성 토글
+    # ------------------------------------------------------------------
+    def _update_widgets_visibility(self):
+        """correction_type 에 따라 날짜/GPS 위젯 숨김/표시"""
+        try:
+            correction_type = getattr(self, "correction_type", "both")
+
+            # 날짜 위젯 가시성
+            show_date = correction_type in ("date", "both")
+            for w in getattr(self, "date_widgets", []):
+                if show_date:
+                    try:
+                        w.grid()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        w.grid_remove()
+                    except Exception:
+                        pass
+
+            # GPS 위젯 가시성
+            show_gps = correction_type in ("gps", "both")
+            for w in getattr(self, "gps_widgets", []):
+                if show_gps:
+                    try:
+                        w.grid()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        w.grid_remove()
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"위젯 가시성 토글 중 오류: {e}")
+
+    # 하위 호환성을 위한 별칭
+    def _update_gps_widgets_visibility(self):
+        """하위 호환성을 위한 별칭"""
+        self._update_widgets_visibility()
 
 
 def show_correction_menu(processor):
