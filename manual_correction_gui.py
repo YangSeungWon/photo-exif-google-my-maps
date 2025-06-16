@@ -100,9 +100,10 @@ class ManualCorrectionGUI:
             row=0, column=0, sticky=tk.W, pady=2
         )
         self.date_var = tk.StringVar()
+        # 날짜를 표시할 Label (textvariable 대신 직접 text 설정)
         self.date_display = ttk.Label(
             correction_frame,
-            textvariable=self.date_var,
+            text="",  # 초기에는 빈 텍스트
             font=("", 10, "bold"),
             foreground="blue",
             relief="sunken",
@@ -112,6 +113,15 @@ class ManualCorrectionGUI:
         ttk.Label(correction_frame, text="← 버튼으로 선택").grid(
             row=0, column=2, sticky=tk.W, pady=2
         )
+
+        # 날짜 값을 설정하고 Label을 동시에 업데이트하는 헬퍼
+        def _set_date_value(value: str):
+            """날짜 변수와 Label을 함께 업데이트"""
+            self.date_var.set(value)
+            self.date_display.config(text=value)
+
+        # 인스턴스 메서드로 바인딩
+        self.set_date_value = _set_date_value
 
         # 날짜 선택 버튼 프레임
         date_buttons_frame = ttk.LabelFrame(
@@ -301,10 +311,10 @@ class ManualCorrectionGUI:
             current_date = current_row.get("DateTimeOriginal")
             # 이미 자동 입력된 값이 있으면 덮어쓰지 않음
             if pd.notna(current_date):
-                self.date_var.set(current_date)
+                self.set_date_value(current_date)
             elif not self.date_var.get().strip():
                 # 자동 입력도 안되고 기존 값도 없으면 빈 값으로 설정
-                self.date_var.set("")
+                self.set_date_value("")
 
         if self.correction_type in ["gps", "both"]:
             current_lat = current_row.get("GPSLat")
@@ -470,7 +480,11 @@ class ManualCorrectionGUI:
                     suggested_dt = prev_dt + pd.Timedelta(seconds=1)
                     suggested_date = suggested_dt.strftime("%Y:%m:%d %H:%M:%S")
 
-                self.date_var.set(suggested_date)
+                self.set_date_value(suggested_date)
+                # UI 강제 업데이트 (여러 방법 시도)
+                self.date_display.config(text=suggested_date)
+                self.date_display.update_idletasks()
+                self.root.update_idletasks()
                 logger.info(f"이전+1초 적용: {suggested_date}")
             else:
                 messagebox.showwarning("알림", "이전 사진이 없습니다.")
@@ -518,7 +532,11 @@ class ManualCorrectionGUI:
                 middle_dt = prev_dt + time_diff / 2
                 suggested_date = middle_dt.strftime("%Y:%m:%d %H:%M:%S")
 
-                self.date_var.set(suggested_date)
+                self.set_date_value(suggested_date)
+                # UI 강제 업데이트 (여러 방법 시도)
+                self.date_display.config(text=suggested_date)
+                self.date_display.update_idletasks()
+                self.root.update_idletasks()
                 logger.info(f"중간값 적용: {suggested_date}")
             else:
                 messagebox.showwarning("알림", "앞뒤 사진이 모두 필요합니다.")
@@ -557,7 +575,11 @@ class ManualCorrectionGUI:
                     suggested_dt = next_dt - pd.Timedelta(seconds=1)
                     suggested_date = suggested_dt.strftime("%Y:%m:%d %H:%M:%S")
 
-                self.date_var.set(suggested_date)
+                self.set_date_value(suggested_date)
+                # UI 강제 업데이트 (여러 방법 시도)
+                self.date_display.config(text=suggested_date)
+                self.date_display.update_idletasks()
+                self.root.update_idletasks()
                 logger.info(f"다음-1초 적용: {suggested_date}")
             else:
                 messagebox.showwarning("알림", "다음 사진이 없습니다.")
@@ -1017,7 +1039,7 @@ class ManualCorrectionGUI:
 
                 datetime.strptime(input_date, "%Y:%m:%d %H:%M:%S")
 
-                self.date_var.set(input_date)
+                self.set_date_value(input_date)
                 dialog.destroy()
                 messagebox.showinfo("완료", f"날짜가 설정되었습니다:\n{input_date}")
 
