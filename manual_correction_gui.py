@@ -96,29 +96,31 @@ class ManualCorrectionGUI:
         )
 
         # 날짜 표시 (읽기 전용)
-        ttk.Label(correction_frame, text="선택된 날짜:").grid(
+        ttk.Label(correction_frame, text="날짜:").grid(
             row=0, column=0, sticky=tk.W, pady=2
         )
         self.date_var = tk.StringVar()
-        # 날짜를 표시할 Label (textvariable 대신 직접 text 설정)
-        self.date_display = ttk.Label(
+        # 직접 수정 가능한 Entry
+        self.date_entry = ttk.Entry(
             correction_frame,
-            text="",  # 초기에는 빈 텍스트
+            textvariable=self.date_var,
+            width=22,
             font=("", 10, "bold"),
             foreground="blue",
-            relief="sunken",
-            padding=(5, 2),
         )
-        self.date_display.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2, padx=5)
-        ttk.Label(correction_frame, text="← 버튼으로 선택").grid(
+        self.date_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2, padx=5)
+        ttk.Label(correction_frame, text="(YYYY:MM:DD HH:MM:SS)").grid(
             row=0, column=2, sticky=tk.W, pady=2
         )
 
-        # 날짜 값을 설정하고 Label을 동시에 업데이트하는 헬퍼
+        # 날짜 값을 설정하고 Entry를 동시에 업데이트하는 헬퍼
         def _set_date_value(value: str):
-            """날짜 변수와 Label을 함께 업데이트"""
+            """날짜 변수와 Entry를 함께 업데이트"""
             self.date_var.set(value)
-            self.date_display.config(text=value)
+            # Entry 텍스트도 동기화 (textvariable만으로 충분하지만 안전하게)
+            if hasattr(self, "date_entry"):
+                self.date_entry.delete(0, tk.END)
+                self.date_entry.insert(0, value)
 
         # 인스턴스 메서드로 바인딩
         self.set_date_value = _set_date_value
@@ -224,11 +226,6 @@ class ManualCorrectionGUI:
         )
         ttk.Button(button_frame, text="완료", command=self.finish_correction).grid(
             row=0, column=3, padx=5
-        )
-
-        # 고급 날짜 추정 버튼 (기존 기능 유지)
-        ttk.Button(button_frame, text="고급 추정", command=self.estimate_date).grid(
-            row=0, column=4, padx=5
         )
 
         # 그리드 설정
@@ -482,8 +479,9 @@ class ManualCorrectionGUI:
 
                 self.set_date_value(suggested_date)
                 # UI 강제 업데이트 (여러 방법 시도)
-                self.date_display.config(text=suggested_date)
-                self.date_display.update_idletasks()
+                self.date_entry.delete(0, tk.END)
+                self.date_entry.insert(0, suggested_date)
+                self.date_entry.update_idletasks()
                 self.root.update_idletasks()
                 logger.info(f"이전+1초 적용: {suggested_date}")
             else:
@@ -534,8 +532,9 @@ class ManualCorrectionGUI:
 
                 self.set_date_value(suggested_date)
                 # UI 강제 업데이트 (여러 방법 시도)
-                self.date_display.config(text=suggested_date)
-                self.date_display.update_idletasks()
+                self.date_entry.delete(0, tk.END)
+                self.date_entry.insert(0, suggested_date)
+                self.date_entry.update_idletasks()
                 self.root.update_idletasks()
                 logger.info(f"중간값 적용: {suggested_date}")
             else:
@@ -577,8 +576,9 @@ class ManualCorrectionGUI:
 
                 self.set_date_value(suggested_date)
                 # UI 강제 업데이트 (여러 방법 시도)
-                self.date_display.config(text=suggested_date)
-                self.date_display.update_idletasks()
+                self.date_entry.delete(0, tk.END)
+                self.date_entry.insert(0, suggested_date)
+                self.date_entry.update_idletasks()
                 self.root.update_idletasks()
                 logger.info(f"다음-1초 적용: {suggested_date}")
             else:
@@ -874,193 +874,6 @@ class ManualCorrectionGUI:
         except Exception as e:
             messagebox.showerror("오류", f"저장 중 오류가 발생했습니다:\n{e}")
             return False
-
-    def estimate_date(self):
-        """고급 날짜 입력 다이얼로그"""
-        if self.correction_type not in ["date", "both"]:
-            return
-
-        # 날짜 입력 다이얼로그 생성
-        dialog = tk.Toplevel(self.root)
-        dialog.title("고급 날짜 입력")
-        dialog.geometry("450x300")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        # 현재 날짜 정보
-        current_date = self.date_var.get()
-
-        ttk.Label(
-            dialog,
-            text="날짜를 직접 입력하거나 추정값을 사용하세요:",
-            font=("", 10, "bold"),
-        ).pack(pady=10)
-
-        # 현재 선택된 날짜 표시
-        if current_date:
-            current_frame = ttk.Frame(dialog)
-            current_frame.pack(pady=5)
-            ttk.Label(current_frame, text="현재 선택된 날짜:").pack(side=tk.LEFT)
-            ttk.Label(
-                current_frame,
-                text=current_date,
-                font=("", 9, "bold"),
-                foreground="blue",
-            ).pack(side=tk.LEFT, padx=5)
-
-        # 날짜 입력 필드
-        input_frame = ttk.LabelFrame(dialog, text="직접 입력", padding=10)
-        input_frame.pack(pady=10, padx=20, fill=tk.X)
-
-        ttk.Label(input_frame, text="날짜 (YYYY:MM:DD HH:MM:SS):").pack(anchor=tk.W)
-        date_entry = ttk.Entry(input_frame, width=25, font=("", 10))
-        date_entry.pack(pady=5, fill=tk.X)
-        date_entry.insert(0, current_date)  # 현재 값으로 초기화
-
-        ttk.Label(
-            input_frame,
-            text="예시: 2024:03:15 14:30:25",
-            font=("", 8),
-            foreground="gray",
-        ).pack(anchor=tk.W)
-
-        # 추정값 프레임
-        estimate_frame = ttk.LabelFrame(dialog, text="자동 추정", padding=10)
-        estimate_frame.pack(pady=10, padx=20, fill=tk.X)
-
-        # 추정값 계산 및 표시
-        try:
-            current_file = self.correction_data.iloc[self.current_index]["FilePath"]
-            current_filename = Path(current_file).name
-
-            all_df = self.processor.df
-            dated_df = all_df[all_df["DateTimeOriginal"].notna()].copy()
-            dated_df = dated_df.sort_values("FileName")
-
-            prev_files = dated_df[dated_df["FileName"] < current_filename]
-            next_files = dated_df[dated_df["FileName"] > current_filename]
-
-            if not prev_files.empty:
-                prev_file = prev_files.iloc[-1]
-                ttk.Label(
-                    estimate_frame,
-                    text=f"이전 사진: {prev_file['FileName']} → {prev_file['DateTimeOriginal']}",
-                    font=("", 9),
-                    foreground="darkgreen",
-                ).pack(anchor=tk.W, pady=2)
-
-                def use_prev_plus():
-                    try:
-                        from datetime import datetime
-
-                        prev_dt = datetime.strptime(
-                            prev_file["DateTimeOriginal"], "%Y:%m:%d %H:%M:%S"
-                        )
-                        suggested_dt = prev_dt.replace(second=prev_dt.second + 1)
-                        suggested_date = suggested_dt.strftime("%Y:%m:%d %H:%M:%S")
-                        date_entry.delete(0, tk.END)
-                        date_entry.insert(0, suggested_date)
-                    except Exception as e:
-                        messagebox.showerror("오류", f"날짜 계산 오류: {e}")
-
-                ttk.Button(
-                    estimate_frame, text="이전 사진 + 1초 사용", command=use_prev_plus
-                ).pack(pady=2)
-
-            if not next_files.empty:
-                next_file = next_files.iloc[0]
-                ttk.Label(
-                    estimate_frame,
-                    text=f"다음 사진: {next_file['FileName']} → {next_file['DateTimeOriginal']}",
-                    font=("", 9),
-                    foreground="darkblue",
-                ).pack(anchor=tk.W, pady=2)
-
-                def use_next_minus():
-                    try:
-                        from datetime import datetime
-
-                        next_dt = datetime.strptime(
-                            next_file["DateTimeOriginal"], "%Y:%m:%d %H:%M:%S"
-                        )
-                        suggested_dt = next_dt.replace(second=next_dt.second - 1)
-                        suggested_date = suggested_dt.strftime("%Y:%m:%d %H:%M:%S")
-                        date_entry.delete(0, tk.END)
-                        date_entry.insert(0, suggested_date)
-                    except Exception as e:
-                        messagebox.showerror("오류", f"날짜 계산 오류: {e}")
-
-                ttk.Button(
-                    estimate_frame, text="다음 사진 - 1초 사용", command=use_next_minus
-                ).pack(pady=2)
-
-            if not prev_files.empty and not next_files.empty:
-
-                def use_middle():
-                    try:
-                        from datetime import datetime
-
-                        prev_dt = datetime.strptime(
-                            prev_file["DateTimeOriginal"], "%Y:%m:%d %H:%M:%S"
-                        )
-                        next_dt = datetime.strptime(
-                            next_file["DateTimeOriginal"], "%Y:%m:%d %H:%M:%S"
-                        )
-                        time_diff = next_dt - prev_dt
-                        middle_dt = prev_dt + time_diff / 2
-                        suggested_date = middle_dt.strftime("%Y:%m:%d %H:%M:%S")
-                        date_entry.delete(0, tk.END)
-                        date_entry.insert(0, suggested_date)
-                    except Exception as e:
-                        messagebox.showerror("오류", f"중간값 계산 오류: {e}")
-
-                ttk.Button(estimate_frame, text="중간값 사용", command=use_middle).pack(
-                    pady=2
-                )
-
-        except Exception as e:
-            ttk.Label(
-                estimate_frame, text=f"추정값 계산 오류: {e}", foreground="red"
-            ).pack()
-
-        # 버튼 프레임
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=20)
-
-        def apply_date():
-            try:
-                input_date = date_entry.get().strip()
-                if not input_date:
-                    messagebox.showwarning("경고", "날짜를 입력해주세요.")
-                    return
-
-                # 날짜 형식 검증
-                from datetime import datetime
-
-                datetime.strptime(input_date, "%Y:%m:%d %H:%M:%S")
-
-                self.set_date_value(input_date)
-                dialog.destroy()
-                messagebox.showinfo("완료", f"날짜가 설정되었습니다:\n{input_date}")
-
-            except ValueError:
-                messagebox.showerror(
-                    "오류",
-                    "날짜 형식이 올바르지 않습니다.\n형식: YYYY:MM:DD HH:MM:SS\n예시: 2024:03:15 14:30:25",
-                )
-            except Exception as e:
-                messagebox.showerror("오류", f"날짜 설정 중 오류가 발생했습니다:\n{e}")
-
-        ttk.Button(button_frame, text="적용", command=apply_date).pack(
-            side=tk.LEFT, padx=5
-        )
-        ttk.Button(button_frame, text="취소", command=dialog.destroy).pack(
-            side=tk.LEFT, padx=5
-        )
-
-        # 엔터키로 적용
-        date_entry.bind("<Return>", lambda e: apply_date())
-        date_entry.focus()
 
     def open_map_for_gps(self):
         """지도를 열어서 GPS 좌표 선택"""
